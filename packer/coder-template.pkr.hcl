@@ -211,6 +211,7 @@ source "proxmox-iso" "debian-coder" {
     "<down><wait>",
     "<tab>",
     " auto=true url=${var.preseed_loader_url}",
+    " hostname=coder-template domain=local",
     " interface=auto noprompt quiet --",
     "<enter>"
   ]
