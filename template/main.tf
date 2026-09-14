@@ -16,7 +16,7 @@ terraform {
 }
 
 # -------------------------------------------------------------------
-# Variables
+# Template variables — set by admin in Template Settings
 # -------------------------------------------------------------------
 
 variable "proxmox_endpoint" {
@@ -28,6 +28,7 @@ variable "proxmox_api_token" {
   type      = string
   sensitive = true
   default   = ""
+  description = "Proxmox VE API token in the format USER@REALM!TOKENID=TOKEN-SECRET (e.g. terraform@pve!provider=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"
 }
 
 variable "proxmox_insecure" {
@@ -45,21 +46,6 @@ variable "template_vm_id" {
   default = 100
 }
 
-variable "cpu_cores" {
-  type    = number
-  default = 2
-}
-
-variable "memory" {
-  type    = number
-  default = 2048
-}
-
-variable "disk_size" {
-  type    = number
-  default = 20
-}
-
 variable "storage_pool" {
   type    = string
   default = "local-lvm"
@@ -75,9 +61,108 @@ variable "network_bridge" {
   default = "vmbr0"
 }
 
-variable "full_clone" {
-  type    = bool
-  default = true
+# -------------------------------------------------------------------
+# Workspace parameters — user selects these when creating a workspace
+# -------------------------------------------------------------------
+
+data "coder_parameter" "cpu_cores" {
+  name         = "cpu_cores"
+  display_name = "CPU Cores"
+  description  = "Number of CPU cores"
+  type         = "number"
+  default      = "2"
+  mutable      = true
+
+  option {
+    name  = "1 Core"
+    value = "1"
+  }
+  option {
+    name  = "2 Cores"
+    value = "2"
+  }
+  option {
+    name  = "4 Cores"
+    value = "4"
+  }
+  option {
+    name  = "8 Cores"
+    value = "8"
+  }
+}
+
+data "coder_parameter" "memory" {
+  name         = "memory"
+  display_name = "Memory"
+  description  = "Memory in MB"
+  type         = "number"
+  default      = "2048"
+  mutable      = true
+
+  option {
+    name  = "1 GB"
+    value = "1024"
+  }
+  option {
+    name  = "2 GB"
+    value = "2048"
+  }
+  option {
+    name  = "4 GB"
+    value = "4096"
+  }
+  option {
+    name  = "8 GB"
+    value = "8192"
+  }
+  option {
+    name  = "16 GB"
+    value = "16384"
+  }
+}
+
+data "coder_parameter" "disk_size" {
+  name         = "disk_size"
+  display_name = "Disk Size"
+  description  = "Boot disk size in GB (must be >= 4)"
+  type         = "number"
+  default      = "20"
+  mutable      = false
+
+  option {
+    name  = "10 GB"
+    value = "10"
+  }
+  option {
+    name  = "20 GB"
+    value = "20"
+  }
+  option {
+    name  = "50 GB"
+    value = "50"
+  }
+  option {
+    name  = "100 GB"
+    value = "100"
+  }
+}
+
+data "coder_parameter" "full_clone" {
+  name         = "full_clone"
+  display_name = "Clone Type"
+  description  = "Full clone uses more disk but is independent. Linked clone is faster but depends on the template."
+  type         = "bool"
+  default      = "true"
+  mutable      = false
+
+  option {
+    name  = "Full Clone"
+    value = "true"
+  }
+  option {
+    name  = "Linked Clone"
+    value = "false"
+  }
 }
 
 # -------------------------------------------------------------------
@@ -139,7 +224,7 @@ resource "proxmox_virtual_environment_file" "cloud_init" {
 }
 
 # -------------------------------------------------------------------
-# VM
+# VM — parameters chosen by user at workspace creation
 # -------------------------------------------------------------------
 
 resource "proxmox_virtual_environment_vm" "workspace" {
@@ -150,21 +235,21 @@ resource "proxmox_virtual_environment_vm" "workspace" {
 
   clone {
     vm_id = var.template_vm_id
-    full  = var.full_clone
+    full  = data.coder_parameter.full_clone.value == "true"
   }
 
   cpu {
-    cores = var.cpu_cores
+    cores = data.coder_parameter.cpu_cores.value
   }
 
   memory {
-    dedicated = var.memory
+    dedicated = data.coder_parameter.memory.value
   }
 
   disk {
     interface    = "scsi0"
     datastore_id = var.storage_pool
-    size         = var.disk_size
+    size         = data.coder_parameter.disk_size.value
     discard      = "on"
     iothread     = true
     ssd          = true
