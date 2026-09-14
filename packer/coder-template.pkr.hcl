@@ -69,7 +69,7 @@ variable "preseed_loader_url" {
 }
 
 # -------------------------------------------------------------------
-# Full preseed content — attached as CD, chainloaded by the loader
+# Full preseed content
 # -------------------------------------------------------------------
 
 locals {
@@ -91,7 +91,9 @@ locals {
   d-i mirror/http/directory string /debian
   d-i mirror/http/proxy string
 
-  d-i passwd/root-login boolean false
+  d-i passwd/root-login boolean true
+  d-i passwd/root-password password root
+  d-i passwd/root-password-again password root
   d-i passwd/make-user boolean true
   d-i passwd/user-fullname string coder
   d-i passwd/username string coder
@@ -131,7 +133,7 @@ locals {
 }
 
 # -------------------------------------------------------------------
-# Source — Debian 13 via chainloaded preseed
+# Source
 # -------------------------------------------------------------------
 
 source "proxmox-iso" "debian-coder" {
@@ -169,7 +171,6 @@ source "proxmox-iso" "debian-coder" {
     bridge = "vmbr0"
   }
 
-  # Boot ISO on ide0
   dynamic "boot_iso" {
     for_each = var.iso_file != "" ? [] : [1]
     content {
@@ -192,7 +193,6 @@ source "proxmox-iso" "debian-coder" {
     }
   }
 
-  # Full preseed on ide2 — chainloaded by the loader preseed
   additional_iso_files {
     type             = "ide"
     index            = "2"
@@ -204,8 +204,6 @@ source "proxmox-iso" "debian-coder" {
     }
   }
 
-  # Boot: select Install, point auto to the hosted loader preseed
-  # The loader fetches via HTTP, mounts the CD, and chainloads the full preseed
   boot_command = [
     "<wait5>",
     "<down><wait>",
@@ -234,6 +232,7 @@ source "proxmox-iso" "debian-coder" {
 build {
   sources = ["source.proxmox-iso.debian-coder"]
 
+  # Install coder binary
   provisioner "shell" {
     inline = [
       "sudo apt-get update",
@@ -244,6 +243,7 @@ build {
     ]
   }
 
+  # Create systemd service — cloud-init writes env file and starts it via runcmd
   provisioner "shell" {
     inline = [
       "sudo tee /etc/systemd/system/coder-agent.service > /dev/null <<'EOF'",
@@ -267,6 +267,7 @@ build {
     ]
   }
 
+  # Clean up for template
   provisioner "shell" {
     inline = [
       "sudo cloud-init clean --logs",

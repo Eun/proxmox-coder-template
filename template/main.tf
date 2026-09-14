@@ -8,6 +8,10 @@ terraform {
       source  = "bpg/proxmox"
       version = "~> 0.112"
     }
+    cidata = {
+      source  = "freefair/cidata"
+      version = "~> 0.1"
+    }
   }
 }
 
@@ -16,69 +20,68 @@ terraform {
 # -------------------------------------------------------------------
 
 variable "proxmox_endpoint" {
-  type        = string
-  default     = ""
-  description = "Proxmox VE API endpoint (e.g. https://pve.example.com:8006/)"
+  type    = string
+  default = ""
 }
 
 variable "proxmox_api_token" {
-  type        = string
-  sensitive   = true
-  default     = ""
-  description = "Proxmox VE API token (e.g. terraform@pve!provider=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"
+  type      = string
+  sensitive = true
+  default   = ""
 }
 
 variable "proxmox_insecure" {
-  type        = bool
-  default     = false
-  description = "Skip TLS verification for the Proxmox API"
+  type    = bool
+  default = false
 }
 
 variable "proxmox_node" {
-  type        = string
-  default     = "pve"
-  description = "Proxmox node name"
+  type    = string
+  default = "pve"
 }
 
 variable "template_vm_id" {
-  type        = number
-  default     = 100
-  description = "VM ID of the template to clone"
+  type    = number
+  default = 100
 }
 
 variable "cpu_cores" {
-  type        = number
-  default     = 2
-  description = "Number of CPU cores"
+  type    = number
+  default = 2
 }
 
 variable "memory" {
-  type        = number
-  default     = 2048
-  description = "Memory in MB"
+  type    = number
+  default = 2048
+}
+
+variable "disk_size" {
+  type    = number
+  default = 20
+}
+
+variable "storage_pool" {
+  type    = string
+  default = "local-lvm"
+}
+
+variable "iso_storage_pool" {
+  type    = string
+  default = "local"
 }
 
 variable "network_bridge" {
-  type        = string
-  default     = "vmbr0"
-  description = "Network bridge to attach the VM to"
-}
-
-variable "datastore_id" {
-  type        = string
-  default     = "local"
-  description = "Datastore for cloud-init snippets"
+  type    = string
+  default = "vmbr0"
 }
 
 variable "full_clone" {
-  type        = bool
-  default     = true
-  description = "Perform a full clone (true) or linked clone (false)"
+  type    = bool
+  default = true
 }
 
 # -------------------------------------------------------------------
-# Provider configuration
-# Uses valid placeholders during push, real values from Template Settings
+# Provider — API only, no SSH
 # -------------------------------------------------------------------
 
 provider "proxmox" {
@@ -99,17 +102,14 @@ resource "coder_agent" "main" {
 }
 
 # -------------------------------------------------------------------
-# Cloud-init snippet — uploaded via Proxmox API, no host access needed
-# Delivers the agent token only; binary is pre-installed in template
+# Cloud-init ISO — real ISO9660, created by cidata provider
+# Uploaded to Proxmox via HTTP API (no SSH)
 # -------------------------------------------------------------------
 
-resource "proxmox_virtual_environment_file" "cloud_init" {
-  content_type = "snippets"
-  datastore_id = var.datastore_id
-  node_name    = var.proxmox_node
+resource "cidata_iso" "cloud_init" {
+  output_path = "${path.module}/generated/coder-${data.coder_workspace.me.id}.iso"
 
-  source_raw {
-    data = <<-EOF
+  user_data = <<-EOF
     #cloud-config
     write_files:
       - path: /etc/coder-agent.env
@@ -117,16 +117,29 @@ resource "proxmox_virtual_environment_file" "cloud_init" {
           CODER_AGENT_TOKEN=${coder_agent.main.token}
           CODER_AGENT_URL=${data.coder_workspace.me.access_url}
     runcmd:
-      - systemctl enable coder-agent
       - systemctl start coder-agent
-    EOF
+  EOF
 
-    file_name = "coder-${data.coder_workspace.me.id}.yaml"
+  meta_data = jsonencode({
+    instance-id    = "coder-${data.coder_workspace.me.id}"
+    local-hostname = "coder-${data.coder_workspace.me.name}"
+  })
+}
+
+resource "proxmox_virtual_environment_file" "cloud_init" {
+  content_type = "iso"
+  datastore_id = var.iso_storage_pool
+  node_name    = var.proxmox_node
+
+  source_file {
+    path      = cidata_iso.cloud_init.output_path
+    checksum  = cidata_iso.cloud_init.sha256
+    file_name = "coder-${data.coder_workspace.me.id}-${substr(cidata_iso.cloud_init.sha256, 0, 8)}.iso"
   }
 }
 
 # -------------------------------------------------------------------
-# VM — cloned from template with coder agent pre-installed
+# VM
 # -------------------------------------------------------------------
 
 resource "proxmox_virtual_environment_vm" "workspace" {
@@ -148,17 +161,36 @@ resource "proxmox_virtual_environment_vm" "workspace" {
     dedicated = var.memory
   }
 
+  disk {
+    interface    = "scsi0"
+    datastore_id = var.storage_pool
+    size         = var.disk_size
+    discard      = "on"
+    iothread     = true
+    ssd          = true
+  }
+
   network_device {
     bridge = var.network_bridge
   }
 
+  cdrom {
+    enabled   = true
+    file_id   = proxmox_virtual_environment_file.cloud_init.id
+    interface = "ide3"
+  }
+
   initialization {
+    datastore_id = var.storage_pool
+
     ip_config {
       ipv4 {
         address = "dhcp"
       }
     }
 
-    user_data_file_id = proxmox_virtual_environment_file.cloud_init.id
+    user_account {
+      username = "coder"
+    }
   }
 }
