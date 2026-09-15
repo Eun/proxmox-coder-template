@@ -334,6 +334,23 @@ build {
     ]
   }
 
+  # Speed up boot — every second here is paid on every workspace start
+  provisioner "shell" {
+    inline = [
+      # GRUB: don't sit on the menu (Debian default is 5s)
+      "sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/' /etc/default/grub",
+      "grep -q '^GRUB_TIMEOUT_STYLE=' /etc/default/grub && sudo sed -i 's/^GRUB_TIMEOUT_STYLE=.*/GRUB_TIMEOUT_STYLE=hidden/' /etc/default/grub || echo 'GRUB_TIMEOUT_STYLE=hidden' | sudo tee -a /etc/default/grub > /dev/null",
+      "sudo update-grub",
+
+      # cloud-init: only NoCloud is ever used (cidata ISO) — skip probing
+      # EC2/Azure/etc. metadata sources that each wait on network timeouts
+      "printf 'datasource_list: [ NoCloud, None ]\\n' | sudo tee /etc/cloud/cloud.cfg.d/99-datasource.cfg > /dev/null",
+
+      # Don't let maintenance timers compete with first boot
+      "sudo systemctl disable apt-daily.timer apt-daily-upgrade.timer man-db.timer 2>/dev/null || true",
+    ]
+  }
+
   # Clean up for template
   provisioner "shell" {
     inline = [
