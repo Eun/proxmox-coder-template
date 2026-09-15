@@ -232,18 +232,75 @@ source "proxmox-iso" "debian-coder" {
 build {
   sources = ["source.proxmox-iso.debian-coder"]
 
-  # Install coder binary
+  # Install system packages, coder, mise, uv, and graphify
   provisioner "shell" {
     inline = [
       "sudo apt-get update",
-      "sudo apt-get install -y curl",
-      "curl -fsSL https://coder.com/install.sh | sh -s -- --method standalone",
-      "sudo mv ~/.local/bin/coder /usr/local/bin/coder || true",
-      "sudo chmod +x /usr/local/bin/coder",
+      "sudo apt-get install -y curl git jq make gnupg",
+
+      # Install coder CLI — sudo installs to /usr/local/bin
+      "curl -fsSL https://coder.com/install.sh | sudo sh -s -- --method standalone",
+
+      # Install mise — install as user, copy to system path
+      "curl -fsSL https://mise.run | sh",
+      "sudo cp ~/.local/bin/mise /usr/local/bin/mise",
+      "sudo chmod +x /usr/local/bin/mise",
+
+      # Install uv — install as user, copy to system path
+      "curl -LsSf https://astral.sh/uv/install.sh | sh",
+      "sudo cp ~/.local/bin/uv /usr/local/bin/uv",
+      "sudo cp ~/.local/bin/uvx /usr/local/bin/uvx",
+      "sudo chmod +x /usr/local/bin/uv /usr/local/bin/uvx",
+
+      # Install graphify (PyPI package is 'graphifyy', command is 'graphify')
+      "uv tool install graphifyy",
+      "sudo cp ~/.local/bin/graphify /usr/local/bin/graphify",
+      "sudo chmod +x /usr/local/bin/graphify",
     ]
   }
 
-  # Create systemd service — cloud-init writes env file and starts it via runcmd
+  # Install Docker CE from official repository
+  provisioner "shell" {
+    inline = [
+      # Add Docker's official GPG key
+      "sudo install -m 0755 -d /etc/apt/keyrings",
+      "curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg",
+      "sudo chmod a+r /etc/apt/keyrings/docker.gpg",
+
+      # Add Docker repository
+      "echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable\" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null",
+
+      # Install Docker CE
+      "sudo apt-get update",
+      "sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin",
+
+      # Add coder user to docker group
+      "sudo usermod -aG docker coder",
+
+      # Enable Docker service
+      "sudo systemctl enable docker",
+      "sudo systemctl enable containerd",
+    ]
+  }
+
+  # Verify all tools
+  provisioner "shell" {
+    inline = [
+      "echo '=== Verifying installed tools ==='",
+      "git --version",
+      "jq --version",
+      "make --version | head -1",
+      "mise --version",
+      "coder version",
+      "docker --version",
+      "docker compose version",
+      "uv --version",
+      "graphify --version",
+    ]
+  }
+
+  # Create systemd service — runs as coder user with HOME set
+  # Cloud-init writes env file and starts it via runcmd
   provisioner "shell" {
     inline = [
       "sudo tee /etc/systemd/system/coder-agent.service > /dev/null <<'EOF'",
@@ -254,6 +311,8 @@ build {
       "",
       "[Service]",
       "Type=simple",
+      "User=coder",
+      "Environment=HOME=/home/coder",
       "EnvironmentFile=/etc/coder-agent.env",
       "ExecStart=/usr/local/bin/coder agent",
       "Restart=always",
