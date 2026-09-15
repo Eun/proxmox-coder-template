@@ -349,6 +349,11 @@ resource "proxmox_virtual_environment_vm" "workspace" {
   name      = "coder-${data.coder_workspace.me.name}"
   tags      = local.tags
 
+  # Deliberately NO `agent { enabled = true }` block here: it would make
+  # Terraform block workspace creation until qemu-guest-agent reports an
+  # IP address (adding 30-60s+ and a hang risk). Coder never needs the
+  # VM's IP — the coder-agent dials out to the Coder server on its own.
+
   # Empty string means no pool — null keeps the VM out of any pool
   pool_id = var.vm_pool != "" ? var.vm_pool : null
 
