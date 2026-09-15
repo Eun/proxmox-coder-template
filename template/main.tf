@@ -61,6 +61,20 @@ variable "network_bridge" {
   default = "vmbr0"
 }
 
+# Not exposed as a coder_parameter on purpose — placement is an admin decision
+variable "vm_pool" {
+  type        = string
+  default     = ""
+  description = "Proxmox resource pool to place workspace VMs in (leave empty for no pool)"
+}
+
+# Not exposed as a coder_parameter on purpose — backup policy is an admin decision
+variable "backup_vm_disk" {
+  type        = bool
+  default     = false
+  description = "Whether the workspace VM disk is included in Proxmox backups"
+}
+
 variable "git_author_name" {
   type        = string
   default     = ""
@@ -333,6 +347,9 @@ resource "proxmox_virtual_environment_vm" "workspace" {
   name      = "coder-${data.coder_workspace.me.name}"
   tags      = local.tags
 
+  # Empty string means no pool — null keeps the VM out of any pool
+  pool_id = var.vm_pool != "" ? var.vm_pool : null
+
   stop_on_destroy = true
 
   clone {
@@ -353,6 +370,7 @@ resource "proxmox_virtual_environment_vm" "workspace" {
     interface    = "scsi0"
     datastore_id = var.storage_pool
     size         = max(data.coder_parameter.disk_size.value, var.default_disk_size)
+    backup       = var.backup_vm_disk
     discard      = "on"
     iothread     = true
     ssd          = true
