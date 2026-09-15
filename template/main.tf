@@ -113,8 +113,8 @@ variable "default_disk_size" {
 
 variable "default_full_clone" {
   type        = bool
-  default     = true
-  description = "Default clone type for new workspaces"
+  default     = false
+  description = "Default clone type for new workspaces. Linked clones (false) are near-instant; full clones copy the whole template disk."
 }
 
 variable "default_tags" {
