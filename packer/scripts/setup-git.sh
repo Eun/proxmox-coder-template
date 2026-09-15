@@ -21,15 +21,21 @@ fi
 git config --global url."git@github.com:".insteadOf "https://github.com/"
 echo "→ git url.insteadOf: https://github.com/ → git@github.com:"
 
-# --- SSH signing ---
-mkdir -p $HOME/.ssh/config.d && chmod 700 $HOME/.ssh
-touch "$HOME/.ssh/config" && chmod 600 "$HOME/.ssh/config"
-if ! grep -q 'Include config.d/*' "$HOME/.ssh/config" 2>/dev/null; then
-  printf '%s\n\n' 'Include config.d/*' | cat - "$HOME/.ssh/config" > "$HOME/.ssh/config.tmp"
-  mv "$HOME/.ssh/config.tmp" "$HOME/.ssh/config"
-  chmod 600 "$HOME/.ssh/config"
-fi
+# --- SSH config ---
+mkdir -p "$HOME/.ssh/config.d" && chmod 700 "$HOME/.ssh"
 
+echo 'Include config.d/*' > "$HOME/.ssh/config"
+chmod 600 "$HOME/.ssh/config"
+
+cat > "$HOME/.ssh/config.d/00-host-key-verification" << 'EOF'
+Host *
+    StrictHostKeyChecking accept-new
+    VerifyHostKeyDNS yes
+EOF
+chmod 600 "$HOME/.ssh/config.d/00-host-key-verification"
+echo "→ SSH config written"
+
+# --- SSH signing ---
 SIGNING_KEY="$HOME/.ssh/coder_signing"
 
 if [ -f /etc/coder-agent.env ]; then
@@ -61,12 +67,11 @@ if [ -f "$SIGNING_KEY" ]; then
     git config --global gpg.ssh.allowedSignersFile "$HOME/.ssh/allowed_signers"
   fi
 
-  mkdir -p "$HOME/.ssh/config.d"
-  cat > "$HOME/.ssh/config.d/commit_signing" << SSHSIGNING
+  cat > "$HOME/.ssh/config.d/10-commit-signing" << SSHSIGNING
 Host *
     IdentityFile $SIGNING_KEY
 SSHSIGNING
-  chmod 600 "$HOME/.ssh/config.d/commit_signing"
+  chmod 600 "$HOME/.ssh/config.d/10-commit-signing"
   echo "✅ Git commit signing enabled (SSH)"
 fi
 
