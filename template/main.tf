@@ -76,19 +76,25 @@ variable "git_author_email" {
 variable "default_cpu_cores" {
   type        = number
   default     = 2
-  description = "Default CPU cores for new workspaces"
+  description = "Default and minimum CPU cores for new workspaces"
 }
 
-variable "default_memory" {
+variable "default_memory_min" {
+  type        = number
+  default     = 1024
+  description = "Default and minimum ballooning floor in MB"
+}
+
+variable "default_memory_max" {
   type        = number
   default     = 2048
-  description = "Default memory in MB for new workspaces"
+  description = "Default and minimum maximum memory in MB"
 }
 
 variable "default_disk_size" {
   type        = number
   default     = 20
-  description = "Default disk size in GB for new workspaces"
+  description = "Default and minimum disk size in GB for new workspaces"
 }
 
 variable "default_full_clone" {
@@ -99,12 +105,13 @@ variable "default_full_clone" {
 
 # -------------------------------------------------------------------
 # Workspace parameters — user can override admin defaults
+# Values below admin defaults are automatically raised via max()
 # -------------------------------------------------------------------
 
 data "coder_parameter" "cpu_cores" {
   name         = "cpu_cores"
   display_name = "CPU Cores"
-  description  = "Number of CPU cores"
+  description  = "Number of CPU cores (minimum: ${var.default_cpu_cores})"
   type         = "number"
   default      = var.default_cpu_cores
   mutable      = true
@@ -127,12 +134,38 @@ data "coder_parameter" "cpu_cores" {
   }
 }
 
-data "coder_parameter" "memory" {
-  name         = "memory"
-  display_name = "Memory"
-  description  = "Memory in MB"
+data "coder_parameter" "memory_min" {
+  name         = "memory_min"
+  display_name = "Memory (Min)"
+  description  = "Minimum guaranteed memory in MB. VM balloons down to this when idle. (minimum: ${var.default_memory_min})"
   type         = "number"
-  default      = var.default_memory
+  default      = var.default_memory_min
+  mutable      = true
+
+  option {
+    name  = "512 MB"
+    value = "512"
+  }
+  option {
+    name  = "1 GB"
+    value = "1024"
+  }
+  option {
+    name  = "2 GB"
+    value = "2048"
+  }
+  option {
+    name  = "4 GB"
+    value = "4096"
+  }
+}
+
+data "coder_parameter" "memory_max" {
+  name         = "memory_max"
+  display_name = "Memory (Max)"
+  description  = "Maximum memory in MB. VM can grow up to this under load. (minimum: ${var.default_memory_max})"
+  type         = "number"
+  default      = var.default_memory_max
   mutable      = true
 
   option {
@@ -160,7 +193,7 @@ data "coder_parameter" "memory" {
 data "coder_parameter" "disk_size" {
   name         = "disk_size"
   display_name = "Disk Size"
-  description  = "Boot disk size in GB (must be >= 4)"
+  description  = "Boot disk size in GB (minimum: ${var.default_disk_size})"
   type         = "number"
   default      = var.default_disk_size
   mutable      = false
@@ -260,7 +293,7 @@ resource "proxmox_virtual_environment_file" "cloud_init" {
 }
 
 # -------------------------------------------------------------------
-# VM
+# VM — max() ensures values never go below admin defaults
 # -------------------------------------------------------------------
 
 resource "proxmox_virtual_environment_vm" "workspace" {
@@ -275,17 +308,18 @@ resource "proxmox_virtual_environment_vm" "workspace" {
   }
 
   cpu {
-    cores = data.coder_parameter.cpu_cores.value
+    cores = max(data.coder_parameter.cpu_cores.value, var.default_cpu_cores)
   }
 
   memory {
-    dedicated = data.coder_parameter.memory.value
+    dedicated = max(data.coder_parameter.memory_max.value, var.default_memory_max)
+    floating  = max(data.coder_parameter.memory_min.value, var.default_memory_min)
   }
 
   disk {
     interface    = "scsi0"
     datastore_id = var.storage_pool
-    size         = data.coder_parameter.disk_size.value
+    size         = max(data.coder_parameter.disk_size.value, var.default_disk_size)
     discard      = "on"
     iothread     = true
     ssd          = true
