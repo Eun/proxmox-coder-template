@@ -299,8 +299,10 @@ resource "cidata_iso" "cloud_init" {
           CODER_AGENT_TOKEN=${coder_agent.main.token}
           CODER_AGENT_URL=${data.coder_workspace.me.access_url}
     runcmd:
-      - su - coder -c '/home/coder/.local/bin/setup-git.sh "${var.git_author_name}" "${var.git_author_email}"'
+      # Start the agent first so Coder connects immediately; setup-git.sh
+      # does a blocking curl to the Coder API and must not delay the agent.
       - systemctl start coder-agent
+      - su - coder -c '/home/coder/.local/bin/setup-git.sh "${var.git_author_name}" "${var.git_author_email}"'
   EOF
 
   meta_data = jsonencode({
