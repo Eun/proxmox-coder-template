@@ -106,7 +106,14 @@ locals {
 
   d-i partman-auto/disk string /dev/sda
   d-i partman-auto/method string regular
-  d-i partman-auto/choose_recipe select atomic
+  d-i partman-auto/expert_recipe string \
+      single-root :: \
+          1 1 -1 ext4 \
+              $primary{ } $bootable{ } \
+              method{ format } format{ } \
+              use_filesystem{ } filesystem{ ext4 } \
+              mountpoint{ / } \
+          .
   d-i partman-partitioning/confirm_write_new_label boolean true
   d-i partman/choose_partition select finish
   d-i partman/confirm boolean true
@@ -116,7 +123,7 @@ locals {
   d-i apt-setup/cdrom/set-first boolean false
   d-i apt-setup/use_mirror boolean true
   tasksel tasksel/first multiselect ssh-server
-  d-i pkgsel/include string qemu-guest-agent sudo cloud-init curl ca-certificates
+  d-i pkgsel/include string qemu-guest-agent sudo cloud-init curl ca-certificates cloud-guest-utils
   d-i pkgsel/upgrade select safe-upgrade
   popularity-contest popularity-contest/participate boolean false
 
