@@ -275,13 +275,12 @@ build {
     ]
   }
 
-  # Upload setup-git.sh from local file
+  # Upload setup-git.sh and setup coder user environment
   provisioner "file" {
     source      = "${path.root}/scripts/setup-git.sh"
     destination = "/tmp/setup-git.sh"
   }
 
-  # Setup mise trust and .local/bin for coder user
   provisioner "shell" {
     inline = [
       "sudo mkdir -p /home/coder/.local/bin",

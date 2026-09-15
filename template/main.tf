@@ -73,8 +73,32 @@ variable "git_author_email" {
   description = "Default git author email for workspaces (leave empty to skip)"
 }
 
+variable "default_cpu_cores" {
+  type        = number
+  default     = 2
+  description = "Default CPU cores for new workspaces"
+}
+
+variable "default_memory" {
+  type        = number
+  default     = 2048
+  description = "Default memory in MB for new workspaces"
+}
+
+variable "default_disk_size" {
+  type        = number
+  default     = 20
+  description = "Default disk size in GB for new workspaces"
+}
+
+variable "default_full_clone" {
+  type        = bool
+  default     = true
+  description = "Default clone type for new workspaces"
+}
+
 # -------------------------------------------------------------------
-# Workspace parameters
+# Workspace parameters — user can override admin defaults
 # -------------------------------------------------------------------
 
 data "coder_parameter" "cpu_cores" {
@@ -82,7 +106,7 @@ data "coder_parameter" "cpu_cores" {
   display_name = "CPU Cores"
   description  = "Number of CPU cores"
   type         = "number"
-  default      = "2"
+  default      = var.default_cpu_cores
   mutable      = true
 
   option {
@@ -108,7 +132,7 @@ data "coder_parameter" "memory" {
   display_name = "Memory"
   description  = "Memory in MB"
   type         = "number"
-  default      = "2048"
+  default      = var.default_memory
   mutable      = true
 
   option {
@@ -138,7 +162,7 @@ data "coder_parameter" "disk_size" {
   display_name = "Disk Size"
   description  = "Boot disk size in GB (must be >= 4)"
   type         = "number"
-  default      = "20"
+  default      = var.default_disk_size
   mutable      = false
 
   option {
@@ -164,7 +188,7 @@ data "coder_parameter" "full_clone" {
   display_name = "Clone Type"
   description  = "Full clone uses more disk but is independent. Linked clone is faster but depends on the template."
   type         = "bool"
-  default      = "true"
+  default      = var.default_full_clone
   mutable      = false
 
   option {
