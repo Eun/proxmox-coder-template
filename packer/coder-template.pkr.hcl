@@ -360,6 +360,11 @@ build {
       "sudo apt-get autoremove -y",
       "sudo apt-get clean",
       "sudo rm -rf /var/lib/apt/lists/*",
+
+      # Return freed blocks to the storage layer so the thin-provisioned
+      # template only carries allocated data — faster full clones & backups
+      "sudo fstrim -av",
+
       "sudo sync",
     ]
   }
