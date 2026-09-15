@@ -25,9 +25,9 @@ variable "proxmox_endpoint" {
 }
 
 variable "proxmox_api_token" {
-  type      = string
-  sensitive = true
-  default   = ""
+  type        = string
+  sensitive   = true
+  default     = ""
   description = "Proxmox VE API token in the format USER@REALM!TOKENID=TOKEN-SECRET (e.g. terraform@pve!provider=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"
 }
 
@@ -61,8 +61,20 @@ variable "network_bridge" {
   default = "vmbr0"
 }
 
+variable "git_author_name" {
+  type        = string
+  default     = ""
+  description = "Default git author name for workspaces (leave empty to skip)"
+}
+
+variable "git_author_email" {
+  type        = string
+  default     = ""
+  description = "Default git author email for workspaces (leave empty to skip)"
+}
+
 # -------------------------------------------------------------------
-# Workspace parameters — user selects these when creating a workspace
+# Workspace parameters
 # -------------------------------------------------------------------
 
 data "coder_parameter" "cpu_cores" {
@@ -187,8 +199,7 @@ resource "coder_agent" "main" {
 }
 
 # -------------------------------------------------------------------
-# Cloud-init ISO — real ISO9660, created by cidata provider
-# Uploaded to Proxmox via HTTP API (no SSH)
+# Cloud-init ISO — just env file + call baked scripts
 # -------------------------------------------------------------------
 
 resource "cidata_iso" "cloud_init" {
@@ -202,6 +213,7 @@ resource "cidata_iso" "cloud_init" {
           CODER_AGENT_TOKEN=${coder_agent.main.token}
           CODER_AGENT_URL=${data.coder_workspace.me.access_url}
     runcmd:
+      - su - coder -c '/home/coder/.local/bin/setup-git.sh "${var.git_author_name}" "${var.git_author_email}"'
       - systemctl start coder-agent
   EOF
 
@@ -224,7 +236,7 @@ resource "proxmox_virtual_environment_file" "cloud_init" {
 }
 
 # -------------------------------------------------------------------
-# VM — parameters chosen by user at workspace creation
+# VM
 # -------------------------------------------------------------------
 
 resource "proxmox_virtual_environment_vm" "workspace" {

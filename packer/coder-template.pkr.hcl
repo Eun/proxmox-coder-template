@@ -118,12 +118,13 @@ locals {
   d-i partman/choose_partition select finish
   d-i partman/confirm boolean true
   d-i partman/confirm_nooverwrite boolean true
+  d-i partman-basicfilesystems/no_swap boolean false
 
   d-i base-installer/install-recommends boolean false
   d-i apt-setup/cdrom/set-first boolean false
   d-i apt-setup/use_mirror boolean true
   tasksel tasksel/first multiselect ssh-server
-  d-i pkgsel/include string qemu-guest-agent sudo cloud-init curl ca-certificates cloud-guest-utils
+  d-i pkgsel/include string qemu-guest-agent sudo cloud-init curl ca-certificates cloud-guest-utils openssh-client git jq make gnupg
   d-i pkgsel/upgrade select safe-upgrade
   popularity-contest popularity-contest/participate boolean false
 
@@ -239,54 +240,55 @@ source "proxmox-iso" "debian-coder" {
 build {
   sources = ["source.proxmox-iso.debian-coder"]
 
-  # Install system packages, coder, mise, uv, and graphify
+  # Install coder, mise, uv, and graphify
   provisioner "shell" {
     inline = [
-      "sudo apt-get update",
-      "sudo apt-get install -y curl git jq make gnupg",
-
-      # Install coder CLI — sudo installs to /usr/local/bin
       "curl -fsSL https://coder.com/install.sh | sudo sh -s -- --method standalone",
 
-      # Install mise — install as user, copy to system path
       "curl -fsSL https://mise.run | sh",
       "sudo cp ~/.local/bin/mise /usr/local/bin/mise",
       "sudo chmod +x /usr/local/bin/mise",
 
-      # Install uv — install as user, copy to system path
       "curl -LsSf https://astral.sh/uv/install.sh | sh",
       "sudo cp ~/.local/bin/uv /usr/local/bin/uv",
       "sudo cp ~/.local/bin/uvx /usr/local/bin/uvx",
       "sudo chmod +x /usr/local/bin/uv /usr/local/bin/uvx",
 
-      # Install graphify (PyPI package is 'graphifyy', command is 'graphify')
       "uv tool install graphifyy",
       "sudo cp ~/.local/bin/graphify /usr/local/bin/graphify",
       "sudo chmod +x /usr/local/bin/graphify",
     ]
   }
 
-  # Install Docker CE from official repository
+  # Install Docker CE
   provisioner "shell" {
     inline = [
-      # Add Docker's official GPG key
       "sudo install -m 0755 -d /etc/apt/keyrings",
       "curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg",
       "sudo chmod a+r /etc/apt/keyrings/docker.gpg",
-
-      # Add Docker repository
       "echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable\" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null",
-
-      # Install Docker CE
       "sudo apt-get update",
       "sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin",
-
-      # Add coder user to docker group
       "sudo usermod -aG docker coder",
-
-      # Enable Docker service
       "sudo systemctl enable docker",
       "sudo systemctl enable containerd",
+    ]
+  }
+
+  # Upload setup-git.sh from local file
+  provisioner "file" {
+    source      = "${path.root}/scripts/setup-git.sh"
+    destination = "/tmp/setup-git.sh"
+  }
+
+  # Setup mise trust and .local/bin for coder user
+  provisioner "shell" {
+    inline = [
+      "sudo mkdir -p /home/coder/.local/bin",
+      "sudo mv /tmp/setup-git.sh /home/coder/.local/bin/setup-git.sh",
+      "sudo chmod +x /home/coder/.local/bin/setup-git.sh",
+      "sudo chown -R coder:coder /home/coder/.local",
+      "sudo su - coder -c 'mise trust /home/coder'",
     ]
   }
 
@@ -303,11 +305,11 @@ build {
       "docker compose version",
       "uv --version",
       "graphify --version",
+      "test -x /home/coder/.local/bin/setup-git.sh && echo '✅ setup-git.sh'",
     ]
   }
 
-  # Create systemd service — runs as coder user with HOME set
-  # Cloud-init writes env file and starts it via runcmd
+  # Create systemd service
   provisioner "shell" {
     inline = [
       "sudo tee /etc/systemd/system/coder-agent.service > /dev/null <<'EOF'",
