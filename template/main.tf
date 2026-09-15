@@ -103,6 +103,12 @@ variable "default_full_clone" {
   description = "Default clone type for new workspaces"
 }
 
+variable "default_tags" {
+  type        = list(string)
+  default     = ["coder"]
+  description = "Tags always applied to workspace VMs. User tags are added on top, these can never be removed."
+}
+
 # -------------------------------------------------------------------
 # Workspace parameters — user can override admin defaults
 # Values below admin defaults are automatically raised via max()
@@ -234,6 +240,15 @@ data "coder_parameter" "full_clone" {
   }
 }
 
+data "coder_parameter" "tags" {
+  name         = "tags"
+  display_name = "Tags"
+  description  = "Additional Proxmox tags as a comma separated list (always applied: ${join(", ", var.default_tags)})"
+  type         = "string"
+  default      = ""
+  mutable      = true
+}
+
 # -------------------------------------------------------------------
 # Provider — API only, no SSH
 # -------------------------------------------------------------------
@@ -293,12 +308,30 @@ resource "proxmox_virtual_environment_file" "cloud_init" {
 }
 
 # -------------------------------------------------------------------
+# Tags — admin defaults are always applied, user tags are added on top
+# Proxmox only accepts lowercase alphanumeric tags plus -_.+
+# -------------------------------------------------------------------
+
+locals {
+  user_tags = [
+    for tag in split(",", data.coder_parameter.tags.value) :
+    lower(trimspace(tag)) if trimspace(tag) != ""
+  ]
+
+  tags = sort(distinct([
+    for tag in concat(var.default_tags, local.user_tags) :
+    replace(lower(trimspace(tag)), "/[^a-z0-9\\-_.+]/", "-")
+  ]))
+}
+
+# -------------------------------------------------------------------
 # VM — max() ensures values never go below admin defaults
 # -------------------------------------------------------------------
 
 resource "proxmox_virtual_environment_vm" "workspace" {
   node_name = var.proxmox_node
   name      = "coder-${data.coder_workspace.me.name}"
+  tags      = local.tags
 
   stop_on_destroy = true
 
