@@ -351,12 +351,85 @@ build {
     ]
   }
 
+  # Keep IPv4 from disappearing hours after boot
+  #
+  # Debian 13 deprecated isc-dhcp-client. ifupdown only *Recommends*
+  # "dhcpcd-base | dhcp-client", and this preseed sets install-recommends
+  # false — so the only reason a DHCP client exists at all is that cloud-init
+  # hard-Depends on one. That client is dhcpcd, and it behaves very
+  # differently from dhclient: it stamps the address with
+  # valid_lft = DHCP lease time (ipv4.c ipv4_addaddr(); IP_LIFETIME is
+  # unconditional on Linux). If dhcpcd ever stops renewing, *the kernel
+  # itself* deletes the address one lease-time later.
+  #
+  # That is exactly what happened: the installer writes "allow-hotplug ens18"
+  # into /etc/network/interfaces while cloud-init's eni renderer writes
+  # "auto ens18" into interfaces.d/50-cloud-init, so the NIC lands in both
+  # ifupdown allow-up lists and two ifup runs race for one interface:
+  #
+  #   ifup[519]: dhcpcd-10.1.0 starting
+  #   ifup[508]: ifup: waiting for lock on /run/network/ifstate.ens18
+  #   dhcpcd[528]: ens18: leased 192.168.1.174 for 86400 seconds
+  #   dhcpcd[528]: received SIGTERM, stopping          <-- 0s after the lease
+  #   ifup[629]: dhcpcd already running on pid 527
+  #   ifup[508]: ifup: failed to bring up ens18
+  #
+  # networking.service then sits in "failed" on *every* boot. Nothing looks
+  # wrong because Debian's /etc/dhcpcd.conf ships "persistent", so the dead
+  # client leaves a fully working routed address behind — until the lease
+  # elapses and the address silently vanishes. dhcpcd-base ships no systemd
+  # unit either (that's the separate "dhcpcd" package), so nothing restarts it.
+  #
+  # See https://github.com/canonical/cloud-init/issues/6967 for the same
+  # mechanism upstream.
+  provisioner "shell" {
+    inline = [
+      # Belt: never let the kernel expire the address. This flips dhcpcd to
+      # vltime = pltime = DHCP_INFINITE_LIFETIME, so a dead client degrades
+      # into a static address instead of a timed outage.
+      "grep -q '^lastleaseextend' /etc/dhcpcd.conf || printf '\\n# Keep the address if dhcpcd dies; the kernel would otherwise delete it\\n# when valid_lft (= DHCP lease time) elapses.\\nlastleaseextend\\n' | sudo tee -a /etc/dhcpcd.conf > /dev/null",
+
+      # Braces: remove the duplicate stanza that causes the collision. DHCP
+      # already works from the installer's own "iface ens18 inet dhcp", and
+      # Coder never needs the VM's IP (the agent dials out), so cloud-init has
+      # no reason to render network config at all.
+      "printf 'network: {config: disabled}\\n' | sudo tee /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg > /dev/null",
+    ]
+  }
+
+  # Verify the networking fix actually took, before this becomes a template.
+  # Must run AFTER the provisioner above. A failed networking.service still
+  # leaves a working address behind (dhcpcd ships "persistent"), so without
+  # an explicit check a broken image looks perfectly healthy at build time
+  # and only loses IPv4 a full lease later, in production.
+  provisioner "shell" {
+    inline = [
+      "echo '=== Verifying networking ==='",
+      "grep -q '^lastleaseextend' /etc/dhcpcd.conf || { echo '❌ lastleaseextend missing from /etc/dhcpcd.conf'; exit 1; }",
+      "echo '✅ lastleaseextend set'",
+      "test -f /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg || { echo '❌ cloud-init network config not disabled'; exit 1; }",
+      "echo '✅ cloud-init network rendering disabled'",
+      "sudo systemctl is-active --quiet networking || { echo '❌ networking.service is not active'; sudo systemctl status networking --no-pager -l; exit 1; }",
+      "echo '✅ networking.service active'",
+      "pgrep -x dhcpcd > /dev/null || { echo '❌ no dhcpcd running — the address would have no renewer'; exit 1; }",
+      "echo '✅ dhcpcd running'",
+    ]
+  }
+
   # Clean up for template
   provisioner "shell" {
     inline = [
       "sudo cloud-init clean --logs",
       "sudo truncate -s 0 /etc/machine-id",
       "sudo rm -f /var/lib/dbus/machine-id",
+
+      # dhcpcd's DUID "should not be copied to other hosts" (dhcpcd.conf(5)).
+      # It is generated at first run — i.e. during this build — so without
+      # this every workspace cloned from the template sends an identical
+      # DHCP ClientID and they all compete for the same lease.
+      "sudo rm -f /var/lib/dhcpcd/duid /var/lib/dhcpcd/secret",
+      "sudo rm -f /var/lib/dhcpcd/*.lease /var/lib/dhcpcd/*.lease6",
+
       "sudo apt-get autoremove -y",
       "sudo apt-get clean",
       "sudo rm -rf /var/lib/apt/lists/*",
