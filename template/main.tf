@@ -293,15 +293,32 @@ resource "cidata_iso" "cloud_init" {
 
   user_data = <<-EOF
     #cloud-config
-    write_files:
-      - path: /etc/coder-agent.env
-        content: |
-          CODER_AGENT_TOKEN=${coder_agent.main.token}
-          CODER_AGENT_URL=${data.coder_workspace.me.access_url}
-    runcmd:
+
+    # The agent token is minted fresh by Coder on every workspace build, and
+    # this ISO is regenerated with the new token each time. It MUST land in
+    # /etc/coder-agent.env and the agent MUST be (re)started on every boot.
+    #
+    # Do NOT use write_files/runcmd for the token: both run only ONCE per
+    # cloud-init instance-id, and instance-id here is the workspace id (see
+    # meta_data below), which is stable across stop/start. After the first
+    # boot cloud-init would skip them, leaving a STALE token from a previous
+    # build in /etc/coder-agent.env. The agent then presents an invalidated
+    # token and coderd rejects it with HTTP 401 ("Workspace agent not
+    # authorized ... this agent is invalid"), so the agent never becomes
+    # healthy and Coder's SSH probe times out. bootcmd runs on EVERY boot, so
+    # the current token is always written and the agent always restarted.
+    bootcmd:
+      - |
+        cat > /etc/coder-agent.env <<'CODERENV'
+        CODER_AGENT_TOKEN=${coder_agent.main.token}
+        CODER_AGENT_URL=${data.coder_workspace.me.access_url}
+        CODERENV
       # Start the agent first so Coder connects immediately; setup-git.sh
-      # does a blocking curl to the Coder API and must not delay the agent.
-      - systemctl start coder-agent
+      # (below) does a blocking curl to the Coder API and must not delay it.
+      - systemctl restart coder-agent
+    runcmd:
+      # Git identity only — safe to run once per instance and must not run on
+      # every boot (it makes a blocking curl to the Coder API).
       - su - coder -c '/home/coder/.local/bin/setup-git.sh "${var.git_author_name}" "${var.git_author_email}"'
   EOF
 
