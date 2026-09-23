@@ -431,10 +431,25 @@ build {
       "grep -q '^lastleaseextend' /etc/dhcpcd.conf || printf '\\n# Keep the address if dhcpcd dies; the kernel would otherwise delete it\\n# when valid_lft (= DHCP lease time) elapses.\\nlastleaseextend\\n' | sudo tee -a /etc/dhcpcd.conf > /dev/null",
 
       # cloud-init network rendering is intentionally left enabled: it must be
-      # free to apply the DHCP network-config carried on the cidata seed (see
-      # network_config in template/main.tf). In particular this build must not
-      # write network:{config:disabled}; the verification step below asserts
-      # that file is absent.
+      # free to configure the NIC. In particular this build must not write
+      # network:{config:disabled}; the verification step below asserts that
+      # file is absent.
+
+      # Remove the installer-baked physical-interface stanza so cloud-init's
+      # generated /etc/network/interfaces.d/50-cloud-init is the ONLY config
+      # for the NIC. The Debian installer writes "allow-hotplug ens18 / iface
+      # ens18 inet dhcp" into /etc/network/interfaces, while on every clone
+      # cloud-init writes "auto ens18 / iface ens18 inet dhcp" into
+      # 50-cloud-init. That puts ens18 in BOTH the allow-hotplug and auto
+      # lists, so two ifup runs race for one interface, networking.service
+      # fails ("ifup: failed to bring up ens18"), and cloud-init then stalls in
+      # its network stage — so coder-agent (ordered after network-online) never
+      # starts and the workspace never becomes reachable. This is invisible at
+      # build time because 50-cloud-init does not exist yet (cloud-init renders
+      # it per-instance on the clone), so the build's own networking check
+      # passes while every clone is broken. Reduce the baked file to loopback +
+      # the interfaces.d include, leaving cloud-init as the single NIC owner.
+      "printf '# Managed by cloud-init (see interfaces.d/50-cloud-init).\\n# The physical NIC stanza is intentionally omitted to avoid an ifupdown\\n# allow-hotplug vs. cloud-init auto race that fails networking.service.\\nsource /etc/network/interfaces.d/*\\n\\nauto lo\\niface lo inet loopback\\n' | sudo tee /etc/network/interfaces > /dev/null",
     ]
   }
 
@@ -450,6 +465,12 @@ build {
       "echo '✅ lastleaseextend set'",
       "test ! -f /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg || { echo '❌ cloud-init network rendering is still disabled — the cidata network-config would be ignored'; exit 1; }",
       "echo '✅ cloud-init network rendering enabled'",
+      # The baked /etc/network/interfaces must not declare a physical NIC, or it
+      # will race cloud-init's 50-cloud-init on the clone and fail
+      # networking.service. (This duplicate is invisible on the template itself
+      # because 50-cloud-init is only rendered per-instance on the clone.)
+      "! grep -qE '^[[:space:]]*(auto|allow-hotplug|iface)[[:space:]]+(en|eth)' /etc/network/interfaces || { echo '❌ /etc/network/interfaces still declares a physical NIC — will race cloud-init on clones'; cat /etc/network/interfaces; exit 1; }",
+      "echo '✅ no physical NIC stanza baked into /etc/network/interfaces'",
       "sudo systemctl is-active --quiet networking || { echo '❌ networking.service is not active'; sudo systemctl status networking --no-pager -l; exit 1; }",
       "echo '✅ networking.service active'",
       "pgrep -x dhcpcd > /dev/null || { echo '❌ no dhcpcd running — the address would have no renewer'; exit 1; }",
