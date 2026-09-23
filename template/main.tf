@@ -366,15 +366,32 @@ resource "proxmox_virtual_environment_vm" "workspace" {
   name      = "coder-${data.coder_workspace.me.name}"
   tags      = local.tags
 
-  # Deliberately NO `agent { enabled = true }` block here: it would make
-  # Terraform block workspace creation until qemu-guest-agent reports an
-  # IP address (adding 30-60s+ and a hang risk). Coder never needs the
-  # VM's IP — the coder-agent dials out to the Coder server on its own.
+  # Explicitly disable the guest-agent integration. This is NOT the same as
+  # simply omitting an `agent {}` block: the Packer template is built with
+  # qemu_agent = true, and bpg/proxmox honors the agent flag from the VM's
+  # *actual* Proxmox config, which a clone INHERITS from the template. So an
+  # omitted block still leaves agent = 1 on the clone, which makes the provider
+  # (a) wait up to 15m for the agent to report an IP on create, and (b) use the
+  # guest agent instead of ACPI to Shutdown on `coder stop` — and if the agent
+  # is not answering, that Shutdown times out and the apply hangs in
+  # "Still modifying..." for minutes. Forcing enabled = false makes Proxmox use
+  # ACPI for shutdown and stops the provider from waiting on the agent at all.
+  # Coder never needs the VM's IP — the coder-agent dials out on its own.
+  agent {
+    enabled = false
+  }
 
   # Empty string means no pool — null keeps the VM out of any pool
   pool_id = var.vm_pool != "" ? var.vm_pool : null
 
   stop_on_destroy = true
+
+  # Bound the shutdown/stop waits so a guest that is slow (or refuses) to power
+  # down on ACPI can never wedge `terraform apply`. After timeout_shutdown_vm
+  # the provider escalates to a hard stop instead of blocking indefinitely
+  # (provider defaults are 1800s shutdown / 300s stop).
+  timeout_shutdown_vm = 60
+  timeout_stop_vm     = 60
 
   # Bind VM power state to the Coder workspace transition. Without this the VM
   # resource never changes on a `stop`, so `terraform apply` is a no-op and the
@@ -382,11 +399,9 @@ resource "proxmox_virtual_environment_vm" "workspace" {
   # stays powered on (stop_on_destroy only stops the VM on destroy/delete, not
   # on stop). start_count is 1 while the workspace is started and 0 while it is
   # stopped, so this powers the VM off on `coder stop` and back on `coder start`.
-  #
-  # Proxmox powers the VM off over the API (ACPI) and does not need the guest
-  # agent for this, which is consistent with this template deliberately having
-  # no `agent {}` block. on_boot is pinned to the same value so a Proxmox host
-  # reboot never silently powers a stopped workspace back on.
+  # With agent { enabled = false } above, the power-off goes over ACPI and the
+  # provider does not wait on the guest agent. on_boot is pinned to the same
+  # value so a Proxmox host reboot never silently powers a stopped workspace on.
   started = data.coder_workspace.me.start_count == 1
   on_boot = data.coder_workspace.me.start_count == 1
 
