@@ -227,8 +227,16 @@ source "proxmox-iso" "debian-coder" {
   ssh_password = "packer"
   ssh_timeout  = "30m"
 
-  cloud_init              = true
-  cloud_init_storage_pool = var.cloud_init_storage_pool
+  # Do NOT add a cloud-init drive to the template. `cloud_init = true` attaches
+  # an empty cidata Cloud-Init CDROM to the template VM, which every clone
+  # inherits (as ide1: vm-<id>-cloudinit). Workspaces already ship their own
+  # NoCloud seed — the token ISO on ide3 built by template/main.tf — so a
+  # template-baked drive would be a SECOND cidata seed. cloud-init reads only
+  # one seed (it reverse-sorts the devices), so two of them race and the wrong
+  # one can win, leaving networking.service failing and the NIC without an
+  # IPv4 address. Keeping this off (the plugin default) means each clone has
+  # exactly one cloud-init seed.
+  cloud_init = false
 
   qemu_agent = true
 }
