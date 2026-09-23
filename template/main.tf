@@ -294,31 +294,17 @@ resource "cidata_iso" "cloud_init" {
   user_data = <<-EOF
     #cloud-config
 
-    # The agent token is minted fresh by Coder on every workspace build, and
-    # this ISO is regenerated with the new token each time. It MUST land in
-    # /etc/coder-agent.env and the agent MUST be (re)started on every boot.
-    #
-    # Do NOT use write_files/runcmd for the token: both run only ONCE per
-    # cloud-init instance-id, and instance-id here is the workspace id (see
-    # meta_data below), which is stable across stop/start. After the first
-    # boot cloud-init would skip them, leaving a STALE token from a previous
-    # build in /etc/coder-agent.env. The agent then presents an invalidated
-    # token and coderd rejects it with HTTP 401 ("Workspace agent not
-    # authorized ... this agent is invalid"), so the agent never becomes
-    # healthy and Coder's SSH probe times out. bootcmd runs on EVERY boot, so
-    # the current token is always written and the agent always restarted.
+    # Coder mints a fresh agent token on every build and this ISO is
+    # regenerated with it, so the token must be written and the agent restarted
+    # on every boot. write_files/runcmd run only once per instance-id (which is
+    # the workspace id below, stable across stop/start) and would leave a stale
+    # token that coderd rejects with HTTP 401. bootcmd runs on every boot.
     bootcmd:
-      # Bring the primary NIC up via DHCP on every boot. This is a belt-and-
-      # braces fallback for the template image built BEFORE this change, which
-      # baked network:{config:disabled} into cloud-init (99-disable-network-
-      # config.cfg). On that image cloud-init renders no network config at all —
-      # not even from this ISO's network_config below — so the NIC comes up with
-      # no address (ci-info shows "ens18  Up=False"), the coder-agent cannot dial
-      # out, and the workspace never becomes reachable. DHCP the first ethernet
-      # interface here so the agent always has connectivity even on that older
-      # image. Once the image is rebuilt (network rendering enabled) the
-      # network_config below handles it and this is just a harmless no-op. Runs
-      # on EVERY boot (bootcmd is PER_ALWAYS) and is idempotent.
+      # DHCP the first ethernet interface on every boot. This is a fallback for
+      # any template image that still disables cloud-init network rendering
+      # (network:{config:disabled}); on such an image the NIC would otherwise
+      # come up with no address, leaving the coder-agent unable to dial out.
+      # Idempotent, and a no-op once the network_config below is applied.
       - |
         IFACE=$(ls /sys/class/net | grep -E '^(en|eth)' | head -n1)
         if [ -n "$IFACE" ]; then
@@ -344,9 +330,7 @@ resource "cidata_iso" "cloud_init" {
   # is the only NoCloud drive attached to the VM (there is no initialization{}
   # block — see the cdrom comment below), cloud-init reads it unambiguously and
   # configures the NIC from here. Match any ethernet name (e*) so it works
-  # regardless of how the NIC enumerates. Takes effect once the template image
-  # no longer sets network:{config:disabled}; until then the bootcmd above is
-  # the fallback that brings the NIC up on the older image.
+  # regardless of how the NIC enumerates.
   network_config = <<-EOF
     version: 2
     ethernets:
@@ -468,15 +452,14 @@ resource "proxmox_virtual_environment_vm" "workspace" {
     bridge = var.network_bridge
   }
 
-  # The single cloud-init NoCloud seed. We deliberately do NOT add an
+  # The single cloud-init NoCloud seed. There is deliberately no
   # `initialization {}` block: bpg/proxmox would attach its own cloudinit drive
   # (also labelled "cidata"), giving cloud-init two seeds. cloud-init reads only
-  # one (it reverse-sorts the devices), so the two would race and Proxmox's
-  # network-config could be silently discarded. Attaching only this ISO removes
-  # the conflict entirely. Everything `initialization {}` used to provide is
-  # covered without it: the `coder` user is created by the Packer preseed
-  # (passwd/username=coder + NOPASSWD sudo), and DHCP is configured by the
-  # network_config carried on this ISO (plus the bootcmd fallback above).
+  # one (it reverse-sorts the devices), so a second seed could race and cause
+  # Proxmox's network-config to be silently discarded. Attaching only this ISO
+  # avoids that. What an initialization{} block would provide is covered here:
+  # the `coder` user comes from the Packer preseed (passwd/username=coder +
+  # NOPASSWD sudo), and DHCP comes from the network_config on this ISO.
   cdrom {
     enabled   = true
     file_id   = proxmox_virtual_environment_file.cloud_init.id

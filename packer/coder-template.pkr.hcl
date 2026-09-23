@@ -389,23 +389,19 @@ build {
       # into a static address instead of a timed outage.
       "grep -q '^lastleaseextend' /etc/dhcpcd.conf || printf '\\n# Keep the address if dhcpcd dies; the kernel would otherwise delete it\\n# when valid_lft (= DHCP lease time) elapses.\\nlastleaseextend\\n' | sudo tee -a /etc/dhcpcd.conf > /dev/null",
 
-      # NOTE: we intentionally do NOT write network:{config:disabled} here. An
-      # earlier revision did, on the theory that the installer's baked
-      # "iface ens18 inet dhcp" stanza was enough. On cloned workspace VMs it is
-      # not: the interface comes up with no address (ci-info: "ens18 Up=False"),
-      # so the coder-agent cannot dial out and the workspace is unreachable.
-      # cloud-init must stay free to apply the DHCP network-config carried on the
-      # cidata seed (see network_config in template/main.tf). Since the file is
-      # never created (Packer builds from a fresh install), there is nothing to
-      # remove; the verification step below asserts it stays absent.
+      # cloud-init network rendering is intentionally left enabled: it must be
+      # free to apply the DHCP network-config carried on the cidata seed (see
+      # network_config in template/main.tf). In particular this build must not
+      # write network:{config:disabled}; the verification step below asserts
+      # that file is absent.
     ]
   }
 
-  # Verify the networking fix actually took, before this becomes a template.
-  # Must run AFTER the provisioner above. A failed networking.service still
-  # leaves a working address behind (dhcpcd ships "persistent"), so without
-  # an explicit check a broken image looks perfectly healthy at build time
-  # and only loses IPv4 a full lease later, in production.
+  # Verify the networking invariants hold in the built image. Must run AFTER
+  # the provisioner above. A failed networking.service still leaves a working
+  # address behind (dhcpcd ships "persistent"), so without an explicit check a
+  # broken image looks healthy at build time and only loses IPv4 a full lease
+  # later, in production.
   provisioner "shell" {
     inline = [
       "echo '=== Verifying networking ==='",
