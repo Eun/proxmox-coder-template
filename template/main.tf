@@ -308,6 +308,27 @@ resource "cidata_iso" "cloud_init" {
     # healthy and Coder's SSH probe times out. bootcmd runs on EVERY boot, so
     # the current token is always written and the agent always restarted.
     bootcmd:
+      # Bring the primary NIC up via DHCP on every boot. This is required
+      # because two NoCloud seeds are attached and BOTH are labelled "cidata"
+      # (the bpg/proxmox initialization{} drive on ide1, which carries the
+      # ip=dhcp network-config, and this token ISO on ide3). cloud-init
+      # reverse-sorts the seed devices and reads only the first, so the token
+      # ISO wins and Proxmox's network-config is discarded. The template image
+      # also historically disabled cloud-init's own network rendering
+      # (99-disable-network-config.cfg), so nothing configures the NIC and it
+      # comes up with no address (ci-info shows "ens18  Up=False"). Without an
+      # address the coder-agent cannot dial out and the workspace never becomes
+      # reachable. Explicitly DHCP the first ethernet interface here so the
+      # agent always has connectivity, regardless of which seed wins or whether
+      # the baked image still disables network rendering. Runs on EVERY boot
+      # (bootcmd is PER_ALWAYS) and is idempotent.
+      - |
+        IFACE=$(ls /sys/class/net | grep -E '^(en|eth)' | head -n1)
+        if [ -n "$IFACE" ]; then
+          ip link set "$IFACE" up
+          # dhcpcd is the DHCP client on Debian 13; -n reconfigures if already running.
+          dhcpcd -n "$IFACE" 2>/dev/null || dhclient "$IFACE" 2>/dev/null || true
+        fi
       - |
         cat > /etc/coder-agent.env <<'CODERENV'
         CODER_AGENT_TOKEN=${coder_agent.main.token}
@@ -320,6 +341,25 @@ resource "cidata_iso" "cloud_init" {
       # Git identity only — safe to run once per instance and must not run on
       # every boot (it makes a blocking curl to the Coder API).
       - su - coder -c '/home/coder/.local/bin/setup-git.sh "${var.git_author_name}" "${var.git_author_email}"'
+  EOF
+
+  # Put the network-config on the seed that actually wins. Both attached
+  # NoCloud drives are labelled "cidata"; cloud-init reverse-sorts the seed
+  # devices and reads only the first, which is this token ISO — so the ip=dhcp
+  # network-config on the bpg/proxmox initialization{} drive is silently
+  # ignored. Carrying an explicit DHCP network-config here means the winning
+  # seed configures the NIC no matter the device ordering. (Only takes effect
+  # once the template image no longer sets network:{config:disabled}; the
+  # bootcmd above is the belt-and-braces fallback that also works on older
+  # images that still disable cloud-init network rendering.)
+  network_config = <<-EOF
+    version: 2
+    ethernets:
+      primary:
+        match:
+          name: "e*"
+        dhcp4: true
+        dhcp6: false
   EOF
 
   meta_data = jsonencode({
