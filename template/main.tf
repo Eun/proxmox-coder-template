@@ -300,18 +300,6 @@ resource "cidata_iso" "cloud_init" {
     # the workspace id below, stable across stop/start) and would leave a stale
     # token that coderd rejects with HTTP 401. bootcmd runs on every boot.
     bootcmd:
-      # DHCP the first ethernet interface on every boot. This is a fallback for
-      # any template image that still disables cloud-init network rendering
-      # (network:{config:disabled}); on such an image the NIC would otherwise
-      # come up with no address, leaving the coder-agent unable to dial out.
-      # Idempotent, and a no-op once the network_config below is applied.
-      - |
-        IFACE=$(ls /sys/class/net | grep -E '^(en|eth)' | head -n1)
-        if [ -n "$IFACE" ]; then
-          ip link set "$IFACE" up
-          # dhcpcd is the DHCP client on Debian 13; -n reconfigures if already running.
-          dhcpcd -n "$IFACE" 2>/dev/null || dhclient "$IFACE" 2>/dev/null || true
-        fi
       - |
         cat > /etc/coder-agent.env <<'CODERENV'
         CODER_AGENT_TOKEN=${coder_agent.main.token}
@@ -328,21 +316,14 @@ resource "cidata_iso" "cloud_init" {
       - su - coder -c '/home/coder/.local/bin/setup-git.sh "${var.git_author_name}" "${var.git_author_email}"'
   EOF
 
-  # DHCP network-config carried on the (single) cloud-init seed. Because this
-  # is the only NoCloud drive attached to the VM (there is no initialization{}
-  # block — see the cdrom comment below), cloud-init reads it unambiguously and
-  # configures the NIC from here. Match any ethernet name (e*) so it works
-  # regardless of how the NIC enumerates.
-  network_config = <<-EOF
-    version: 2
-    ethernets:
-      primary:
-        match:
-          name: "e*"
-        dhcp4: true
-        dhcp6: false
-  EOF
-
+  # No network_config: the interface is brought up by the installer-baked
+  # /etc/network/interfaces stanza (allow-hotplug ens18 / iface ens18 inet
+  # dhcp), which DHCPs the NIC via dhcpcd. cloud-init must NOT also render
+  # network config here — its eni/ifupdown renderer emits a literal
+  # `iface <name> inet dhcp`, and a netplan-style `match:` with a logical name
+  # produces `iface primary ...` for a device that does not exist, so
+  # networking.service fails with "primary: interface not found". Leaving this
+  # out keeps a single owner (the installer stanza) for the NIC.
   meta_data = jsonencode({
     instance-id    = "coder-${data.coder_workspace.me.id}"
     local-hostname = "coder-${data.coder_workspace.me.name}"
@@ -465,9 +446,10 @@ resource "proxmox_virtual_environment_vm" "workspace" {
   # (also labelled "cidata"), giving cloud-init two seeds. cloud-init reads only
   # one (it reverse-sorts the devices), so a second seed could race and cause
   # Proxmox's network-config to be silently discarded. Attaching only this ISO
-  # avoids that. What an initialization{} block would provide is covered here:
-  # the `coder` user comes from the Packer preseed (passwd/username=coder +
-  # NOPASSWD sudo), and DHCP comes from the network_config on this ISO.
+  # avoids that. What an initialization{} block would provide is covered
+  # elsewhere: the `coder` user comes from the Packer preseed
+  # (passwd/username=coder + NOPASSWD sudo), and DHCP comes from the
+  # installer-baked /etc/network/interfaces stanza for ens18.
   cdrom {
     enabled   = true
     file_id   = proxmox_virtual_environment_file.cloud_init.id
