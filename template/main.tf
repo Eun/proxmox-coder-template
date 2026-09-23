@@ -316,14 +316,28 @@ resource "cidata_iso" "cloud_init" {
       - su - coder -c '/home/coder/.local/bin/setup-git.sh "${var.git_author_name}" "${var.git_author_email}"'
   EOF
 
-  # No network_config: the interface is brought up by the installer-baked
-  # /etc/network/interfaces stanza (allow-hotplug ens18 / iface ens18 inet
-  # dhcp), which DHCPs the NIC via dhcpcd. cloud-init must NOT also render
-  # network config here — its eni/ifupdown renderer emits a literal
-  # `iface <name> inet dhcp`, and a netplan-style `match:` with a logical name
-  # produces `iface primary ...` for a device that does not exist, so
-  # networking.service fails with "primary: interface not found". Leaving this
-  # out keeps a single owner (the installer stanza) for the NIC.
+  # IPv4-only DHCP network-config for the NIC. Without this, cloud-init
+  # generates a fallback config that also does DHCPv6 (it renders
+  # `iface ens18 inet6 dhcp` into 50-cloud-init). This network has no DHCPv6
+  # server, so that stanza makes `ifup` exit non-zero ("failed to bring up
+  # ens18") even though the IPv4 lease succeeded — which fails
+  # networking.service, stalls cloud-init in its network stage, and prevents
+  # coder-agent (ordered after network-online.target) from ever starting.
+  #
+  # network-config **v1** is used deliberately: cloud-init's ifupdown (eni)
+  # renderer turns it into a plain `iface ens18 inet dhcp` with NO inet6 line.
+  # (A v2 config with a `match:` + logical name renders a bogus `iface primary`
+  # for a nonexistent device, so it must not be used with the eni renderer.)
+  # The NIC is a single Proxmox virtio device and enumerates as ens18.
+  network_config = <<-EOF
+    version: 1
+    config:
+      - type: physical
+        name: ens18
+        subnets:
+          - type: dhcp4
+  EOF
+
   meta_data = jsonencode({
     instance-id    = "coder-${data.coder_workspace.me.id}"
     local-hostname = "coder-${data.coder_workspace.me.name}"
