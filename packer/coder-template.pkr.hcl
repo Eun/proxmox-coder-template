@@ -314,14 +314,24 @@ build {
       "sudo tee /etc/systemd/system/coder-agent.service > /dev/null <<'EOF'",
       "[Unit]",
       "Description=Coder Agent",
-      "After=network-online.target",
-      "Wants=network-online.target",
+      "After=network-online.target time-sync.target",
+      "Wants=network-online.target time-sync.target",
       "",
       "[Service]",
       "Type=simple",
       "User=coder",
       "Environment=HOME=/home/coder",
       "EnvironmentFile=/etc/coder-agent.env",
+      # Wait until the system clock has actually been synchronized before the
+      # agent starts. time-sync.target ordering only applies to boot-time
+      # activation, but cloud-init starts the agent with an explicit
+      # `systemctl restart`, which bypasses that ordering — so gate on the
+      # synchronized marker here too. systemd-timesyncd creates
+      # /run/systemd/timesync/synchronized on its first successful sync;
+      # without this the agent can start while the clock still reads 1970,
+      # which is what makes the workspace's reported times inaccurate. Bounded
+      # so a host that never syncs cannot wedge the agent forever.
+      "ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -e /run/systemd/timesync/synchronized ] && exit 0; sleep 1; done; exit 0'",
       "ExecStart=/usr/local/bin/coder agent",
       "Restart=always",
       "RestartSec=5",
@@ -329,6 +339,11 @@ build {
       "[Install]",
       "WantedBy=multi-user.target",
       "EOF",
+
+      # Wait until the clock is genuinely synchronized before time-sync.target
+      # is considered reached, so the ordering above reflects a real sync
+      # rather than merely timesyncd having started.
+      "sudo systemctl enable systemd-time-wait-sync.service",
 
       "sudo systemctl daemon-reload",
     ]

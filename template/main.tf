@@ -317,8 +317,10 @@ resource "cidata_iso" "cloud_init" {
         CODER_AGENT_TOKEN=${coder_agent.main.token}
         CODER_AGENT_URL=${data.coder_workspace.me.access_url}
         CODERENV
-      # Start the agent first so Coder connects immediately; setup-git.sh
-      # (below) does a blocking curl to the Coder API and must not delay it.
+      # Restart the agent so it picks up the token just written above. The
+      # unit gates its own start on the clock being time-synced (see its
+      # ExecStartPre), so this may wait briefly on first boot; setup-git.sh
+      # (below) runs independently and is not blocked by it.
       - systemctl restart coder-agent
     runcmd:
       # Git identity only — safe to run once per instance and must not run on
