@@ -294,20 +294,24 @@ resource "cidata_iso" "cloud_init" {
   user_data = <<-EOF
     #cloud-config
 
-    # The agent token is minted fresh by Coder on every workspace build, and
-    # this ISO is regenerated with the new token each time. It MUST land in
-    # /etc/coder-agent.env and the agent MUST be (re)started on every boot.
-    #
-    # Do NOT use write_files/runcmd for the token: both run only ONCE per
-    # cloud-init instance-id, and instance-id here is the workspace id (see
-    # meta_data below), which is stable across stop/start. After the first
-    # boot cloud-init would skip them, leaving a STALE token from a previous
-    # build in /etc/coder-agent.env. The agent then presents an invalidated
-    # token and coderd rejects it with HTTP 401 ("Workspace agent not
-    # authorized ... this agent is invalid"), so the agent never becomes
-    # healthy and Coder's SSH probe times out. bootcmd runs on EVERY boot, so
-    # the current token is always written and the agent always restarted.
+    # Coder mints a fresh agent token on every build and this ISO is
+    # regenerated with it, so the token must be written and the agent restarted
+    # on every boot. write_files/runcmd run only once per instance-id (which is
+    # the workspace id below, stable across stop/start) and would leave a stale
+    # token that coderd rejects with HTTP 401. bootcmd runs on every boot.
     bootcmd:
+      # DHCP the first ethernet interface on every boot. This is a fallback for
+      # any template image that still disables cloud-init network rendering
+      # (network:{config:disabled}); on such an image the NIC would otherwise
+      # come up with no address, leaving the coder-agent unable to dial out.
+      # Idempotent, and a no-op once the network_config below is applied.
+      - |
+        IFACE=$(ls /sys/class/net | grep -E '^(en|eth)' | head -n1)
+        if [ -n "$IFACE" ]; then
+          ip link set "$IFACE" up
+          # dhcpcd is the DHCP client on Debian 13; -n reconfigures if already running.
+          dhcpcd -n "$IFACE" 2>/dev/null || dhclient "$IFACE" 2>/dev/null || true
+        fi
       - |
         cat > /etc/coder-agent.env <<'CODERENV'
         CODER_AGENT_TOKEN=${coder_agent.main.token}
@@ -320,6 +324,21 @@ resource "cidata_iso" "cloud_init" {
       # Git identity only — safe to run once per instance and must not run on
       # every boot (it makes a blocking curl to the Coder API).
       - su - coder -c '/home/coder/.local/bin/setup-git.sh "${var.git_author_name}" "${var.git_author_email}"'
+  EOF
+
+  # DHCP network-config carried on the (single) cloud-init seed. Because this
+  # is the only NoCloud drive attached to the VM (there is no initialization{}
+  # block — see the cdrom comment below), cloud-init reads it unambiguously and
+  # configures the NIC from here. Match any ethernet name (e*) so it works
+  # regardless of how the NIC enumerates.
+  network_config = <<-EOF
+    version: 2
+    ethernets:
+      primary:
+        match:
+          name: "e*"
+        dhcp4: true
+        dhcp6: false
   EOF
 
   meta_data = jsonencode({
@@ -433,23 +452,17 @@ resource "proxmox_virtual_environment_vm" "workspace" {
     bridge = var.network_bridge
   }
 
+  # The single cloud-init NoCloud seed. There is deliberately no
+  # `initialization {}` block: bpg/proxmox would attach its own cloudinit drive
+  # (also labelled "cidata"), giving cloud-init two seeds. cloud-init reads only
+  # one (it reverse-sorts the devices), so a second seed could race and cause
+  # Proxmox's network-config to be silently discarded. Attaching only this ISO
+  # avoids that. What an initialization{} block would provide is covered here:
+  # the `coder` user comes from the Packer preseed (passwd/username=coder +
+  # NOPASSWD sudo), and DHCP comes from the network_config on this ISO.
   cdrom {
     enabled   = true
     file_id   = proxmox_virtual_environment_file.cloud_init.id
     interface = "ide3"
-  }
-
-  initialization {
-    datastore_id = var.storage_pool
-
-    ip_config {
-      ipv4 {
-        address = "dhcp"
-      }
-    }
-
-    user_account {
-      username = "coder"
-    }
   }
 }

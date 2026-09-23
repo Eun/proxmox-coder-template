@@ -389,26 +389,26 @@ build {
       # into a static address instead of a timed outage.
       "grep -q '^lastleaseextend' /etc/dhcpcd.conf || printf '\\n# Keep the address if dhcpcd dies; the kernel would otherwise delete it\\n# when valid_lft (= DHCP lease time) elapses.\\nlastleaseextend\\n' | sudo tee -a /etc/dhcpcd.conf > /dev/null",
 
-      # Braces: remove the duplicate stanza that causes the collision. DHCP
-      # already works from the installer's own "iface ens18 inet dhcp", and
-      # Coder never needs the VM's IP (the agent dials out), so cloud-init has
-      # no reason to render network config at all.
-      "printf 'network: {config: disabled}\\n' | sudo tee /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg > /dev/null",
+      # cloud-init network rendering is intentionally left enabled: it must be
+      # free to apply the DHCP network-config carried on the cidata seed (see
+      # network_config in template/main.tf). In particular this build must not
+      # write network:{config:disabled}; the verification step below asserts
+      # that file is absent.
     ]
   }
 
-  # Verify the networking fix actually took, before this becomes a template.
-  # Must run AFTER the provisioner above. A failed networking.service still
-  # leaves a working address behind (dhcpcd ships "persistent"), so without
-  # an explicit check a broken image looks perfectly healthy at build time
-  # and only loses IPv4 a full lease later, in production.
+  # Verify the networking invariants hold in the built image. Must run AFTER
+  # the provisioner above. A failed networking.service still leaves a working
+  # address behind (dhcpcd ships "persistent"), so without an explicit check a
+  # broken image looks healthy at build time and only loses IPv4 a full lease
+  # later, in production.
   provisioner "shell" {
     inline = [
       "echo '=== Verifying networking ==='",
       "grep -q '^lastleaseextend' /etc/dhcpcd.conf || { echo '❌ lastleaseextend missing from /etc/dhcpcd.conf'; exit 1; }",
       "echo '✅ lastleaseextend set'",
-      "test -f /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg || { echo '❌ cloud-init network config not disabled'; exit 1; }",
-      "echo '✅ cloud-init network rendering disabled'",
+      "test ! -f /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg || { echo '❌ cloud-init network rendering is still disabled — the cidata network-config would be ignored'; exit 1; }",
+      "echo '✅ cloud-init network rendering enabled'",
       "sudo systemctl is-active --quiet networking || { echo '❌ networking.service is not active'; sudo systemctl status networking --no-pager -l; exit 1; }",
       "echo '✅ networking.service active'",
       "pgrep -x dhcpcd > /dev/null || { echo '❌ no dhcpcd running — the address would have no renewer'; exit 1; }",
