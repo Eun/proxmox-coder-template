@@ -124,7 +124,7 @@ locals {
   d-i apt-setup/cdrom/set-first boolean false
   d-i apt-setup/use_mirror boolean true
   tasksel tasksel/first multiselect ssh-server
-  d-i pkgsel/include string qemu-guest-agent sudo cloud-init curl ca-certificates cloud-guest-utils openssh-client git jq make gnupg
+  d-i pkgsel/include string qemu-guest-agent sudo cloud-init curl ca-certificates cloud-guest-utils openssh-client git jq make gnupg systemd-timesyncd
   d-i pkgsel/upgrade select safe-upgrade
   popularity-contest popularity-contest/participate boolean false
 
@@ -325,13 +325,13 @@ build {
       # Wait until the system clock has actually been synchronized before the
       # agent starts. time-sync.target ordering only applies to boot-time
       # activation, but cloud-init starts the agent with an explicit
-      # `systemctl restart`, which bypasses that ordering — so gate on the
-      # synchronized marker here too. systemd-timesyncd creates
-      # /run/systemd/timesync/synchronized on its first successful sync;
-      # without this the agent can start while the clock still reads 1970,
-      # which is what makes the workspace's reported times inaccurate. Bounded
-      # so a host that never syncs cannot wedge the agent forever.
-      "ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -e /run/systemd/timesync/synchronized ] && exit 0; sleep 1; done; exit 0'",
+      # `systemctl restart`, which bypasses that ordering — so gate on sync
+      # here too: either systemd-timesyncd's synchronized marker or
+      # timedatectl reporting NTPSynchronized=yes. Without this the agent can
+      # start while the clock still reads 1970, which is what makes the
+      # workspace's reported times inaccurate. Bounded to ~60s so a host that
+      # never syncs cannot wedge the agent forever.
+      "ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -e /run/systemd/timesync/synchronized ] && exit 0; [ x$(timedatectl show -p NTPSynchronized --value 2>/dev/null) = xyes ] && exit 0; sleep 1; done; exit 0'",
       "ExecStart=/usr/local/bin/coder agent",
       "Restart=always",
       "RestartSec=5",
@@ -340,10 +340,11 @@ build {
       "WantedBy=multi-user.target",
       "EOF",
 
-      # Wait until the clock is genuinely synchronized before time-sync.target
-      # is considered reached, so the ordering above reflects a real sync
-      # rather than merely timesyncd having started.
-      "sudo systemctl enable systemd-time-wait-sync.service",
+      # Ensure the NTP client actually runs, so the clock gets synchronized and
+      # the marker the agent waits for (/run/systemd/timesync/synchronized) is
+      # created. systemd-timesyncd is a separate package on Debian and is
+      # installed via the preseed's pkgsel/include; enable it explicitly here.
+      "sudo systemctl enable systemd-timesyncd.service",
 
       "sudo systemctl daemon-reload",
     ]
