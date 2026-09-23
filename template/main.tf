@@ -305,11 +305,17 @@ resource "cidata_iso" "cloud_init" {
         CODER_AGENT_TOKEN=${coder_agent.main.token}
         CODER_AGENT_URL=${data.coder_workspace.me.access_url}
         CODERENV
-      # Restart the agent so it picks up the token just written above. The
-      # unit gates its own start on the clock being time-synced (see its
-      # ExecStartPre), so this may wait briefly on first boot; setup-git.sh
-      # (below) runs independently and is not blocked by it.
-      - systemctl restart coder-agent
+      # Restart the agent so it picks up the token just written above. MUST be
+      # --no-block: bootcmd runs synchronously inside cloud-init-network.service,
+      # and coder-agent.service is ordered After=network-online.target with a
+      # time-sync ExecStartPre gate. A blocking `systemctl restart` waits for
+      # those dependencies, which are themselves sequenced around cloud-init —
+      # producing an ordering deadlock where cloud-init hangs in its network
+      # stage, never reaches modules-final, and the agent never actually starts
+      # (its unit shows no journal entries at all). --no-block queues the
+      # restart and lets systemd start it once network-online + time-sync are
+      # satisfied, so cloud-init finishes and the agent comes up asynchronously.
+      - systemctl restart --no-block coder-agent
     runcmd:
       # Git identity only — safe to run once per instance and must not run on
       # every boot (it makes a blocking curl to the Coder API).
