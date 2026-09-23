@@ -405,6 +405,12 @@ resource "proxmox_virtual_environment_vm" "workspace" {
 
   stop_on_destroy = true
 
+  # A unix-socket serial device so `qm terminal <vmid>` works on the Proxmox
+  # host, giving console access when the network is down or cloud-init hangs.
+  # The guest half (a getty on ttyS0 and console=ttyS0 on the kernel cmdline)
+  # is baked into the Packer image.
+  serial_device {}
+
   # Bound the shutdown/stop waits so a guest that is slow (or refuses) to power
   # down on ACPI can never wedge `terraform apply`. After timeout_shutdown_vm
   # the provider escalates to a hard stop instead of blocking indefinitely

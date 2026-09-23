@@ -351,6 +351,23 @@ build {
     ]
   }
 
+  # Guest half of the serial console (the VM gets its serial device from the
+  # serial_device {} block in template/main.tf). Add ttyS0 as a kernel console
+  # and run a login getty on it so `qm terminal <vmid>` reaches a prompt. tty0
+  # is kept so the VGA/noVNC console still works; ttyS0 is listed last so
+  # systemd treats it as the primary console and starts serial-getty@ttyS0,
+  # which is also enabled explicitly.
+  provisioner "shell" {
+    inline = [
+      # Append the serial consoles to GRUB_CMDLINE_LINUX. Handle both cases:
+      # the line already exists (Debian ships GRUB_CMDLINE_LINUX=\"\") -> edit in
+      # place; the line is somehow absent -> add it. Idempotent via the guard.
+      "if ! grep -q 'console=ttyS0' /etc/default/grub; then if grep -q '^GRUB_CMDLINE_LINUX=' /etc/default/grub; then sudo sed -i 's/^GRUB_CMDLINE_LINUX=\"\\(.*\\)\"/GRUB_CMDLINE_LINUX=\"\\1 console=tty0 console=ttyS0,115200\"/' /etc/default/grub; else echo 'GRUB_CMDLINE_LINUX=\"console=tty0 console=ttyS0,115200\"' | sudo tee -a /etc/default/grub > /dev/null; fi; fi",
+      "sudo update-grub",
+      "sudo systemctl enable serial-getty@ttyS0.service",
+    ]
+  }
+
   # Keep IPv4 from disappearing hours after boot
   #
   # Debian 13 deprecated isc-dhcp-client. ifupdown only *Recommends*
