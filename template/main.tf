@@ -376,6 +376,20 @@ resource "proxmox_virtual_environment_vm" "workspace" {
 
   stop_on_destroy = true
 
+  # Bind VM power state to the Coder workspace transition. Without this the VM
+  # resource never changes on a `stop`, so `terraform apply` is a no-op and the
+  # Proxmox VM keeps running — `coder stop` appears to succeed but the guest
+  # stays powered on (stop_on_destroy only stops the VM on destroy/delete, not
+  # on stop). start_count is 1 while the workspace is started and 0 while it is
+  # stopped, so this powers the VM off on `coder stop` and back on `coder start`.
+  #
+  # Proxmox powers the VM off over the API (ACPI) and does not need the guest
+  # agent for this, which is consistent with this template deliberately having
+  # no `agent {}` block. on_boot is pinned to the same value so a Proxmox host
+  # reboot never silently powers a stopped workspace back on.
+  started = data.coder_workspace.me.start_count == 1
+  on_boot = data.coder_workspace.me.start_count == 1
+
   clone {
     vm_id = var.template_vm_id
     full  = data.coder_parameter.full_clone.value == "true"
