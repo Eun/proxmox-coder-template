@@ -389,15 +389,15 @@ build {
       # into a static address instead of a timed outage.
       "grep -q '^lastleaseextend' /etc/dhcpcd.conf || printf '\\n# Keep the address if dhcpcd dies; the kernel would otherwise delete it\\n# when valid_lft (= DHCP lease time) elapses.\\nlastleaseextend\\n' | sudo tee -a /etc/dhcpcd.conf > /dev/null",
 
-      # Do NOT disable cloud-init's network rendering. An earlier revision wrote
-      # network:{config:disabled} here on the theory that the installer's baked
+      # NOTE: we intentionally do NOT write network:{config:disabled} here. An
+      # earlier revision did, on the theory that the installer's baked
       # "iface ens18 inet dhcp" stanza was enough. On cloned workspace VMs it is
       # not: the interface comes up with no address (ci-info: "ens18 Up=False"),
       # so the coder-agent cannot dial out and the workspace is unreachable.
       # cloud-init must stay free to apply the DHCP network-config carried on the
-      # cidata seed (see network_config in template/main.tf). If any prior image
-      # left the disable file behind, remove it so this rebuild is clean.
-      "sudo rm -f /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg",
+      # cidata seed (see network_config in template/main.tf). Since the file is
+      # never created (Packer builds from a fresh install), there is nothing to
+      # remove; the verification step below asserts it stays absent.
     ]
   }
 
