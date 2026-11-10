@@ -149,8 +149,44 @@ data "coder_parameter" "cpu_cores" {
     value = "4"
   }
   option {
+    name  = "6 Cores"
+    value = "6"
+  }
+  option {
     name  = "8 Cores"
     value = "8"
+  }
+  option {
+    name  = "10 Cores"
+    value = "10"
+  }
+  option {
+    name  = "12 Cores"
+    value = "12"
+  }
+  option {
+    name  = "14 Cores"
+    value = "14"
+  }
+  option {
+    name  = "16 Cores"
+    value = "16"
+  }
+  option {
+    name  = "18 Cores"
+    value = "18"
+  }
+  option {
+    name  = "20 Cores"
+    value = "20"
+  }
+  option {
+    name  = "22 Cores"
+    value = "22"
+  }
+  option {
+    name  = "24 Cores"
+    value = "24"
   }
 }
 
@@ -177,6 +213,50 @@ data "coder_parameter" "memory_min" {
   option {
     name  = "4 GB"
     value = "4096"
+  }
+  option {
+    name  = "8 GB"
+    value = "8192"
+  }
+  option {
+    name  = "12 GB"
+    value = "12288"
+  }
+  option {
+    name  = "16 GB"
+    value = "16384"
+  }
+  option {
+    name  = "20 GB"
+    value = "20480"
+  }
+  option {
+    name  = "24 GB"
+    value = "24576"
+  }
+  option {
+    name  = "28 GB"
+    value = "28672"
+  }
+  option {
+    name  = "32 GB"
+    value = "32768"
+  }
+  option {
+    name  = "36 GB"
+    value = "36864"
+  }
+  option {
+    name  = "40 GB"
+    value = "40960"
+  }
+  option {
+    name  = "44 GB"
+    value = "45056"
+  }
+  option {
+    name  = "48 GB"
+    value = "49152"
   }
 }
 
@@ -205,8 +285,44 @@ data "coder_parameter" "memory_max" {
     value = "8192"
   }
   option {
+    name  = "12 GB"
+    value = "12288"
+  }
+  option {
     name  = "16 GB"
     value = "16384"
+  }
+  option {
+    name  = "20 GB"
+    value = "20480"
+  }
+  option {
+    name  = "24 GB"
+    value = "24576"
+  }
+  option {
+    name  = "28 GB"
+    value = "28672"
+  }
+  option {
+    name  = "32 GB"
+    value = "32768"
+  }
+  option {
+    name  = "36 GB"
+    value = "36864"
+  }
+  option {
+    name  = "40 GB"
+    value = "40960"
+  }
+  option {
+    name  = "44 GB"
+    value = "45056"
+  }
+  option {
+    name  = "48 GB"
+    value = "49152"
   }
 }
 
